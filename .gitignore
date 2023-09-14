@@ -1,0 +1,8 @@
+*.exe
+*.pdb
+*.lib
+*.dmp
+*.ilk
+*.a
+
+ols.json
