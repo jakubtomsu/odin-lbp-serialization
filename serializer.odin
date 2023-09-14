@@ -162,7 +162,7 @@ serialize_opaque_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_lo
 serialize_slice_info :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
     serializer_debug_scope(s, "slice info")
     num_items := len(data)
-    serialize_number(s, &num_items, loc) or_return
+    serialize_basic(s, &num_items, loc) or_return
     if !s.is_writing {
         data^ = make([]E, num_items, loc = loc)
     }
@@ -178,7 +178,7 @@ serialize_dynamic_array_info :: proc(
 ) -> bool {
     serializer_debug_scope(s, "dynamic array info")
     num_items := len(data)
-    serialize_number(s, &num_items, loc) or_return
+    serialize_basic(s, &num_items, loc) or_return
     if !s.is_writing {
         data^ = make([dynamic]E, num_items, num_items, loc = loc)
     }
@@ -199,11 +199,14 @@ serialize_opaque_dynamic_array :: proc(
 
 when SERIALIZER_ENABLE_GENERIC {
     @(require_results)
-    serialize_number :: proc(
+    serialize_basic :: proc(
         s: ^Serializer,
         data: ^$T,
         loc := #caller_location,
-    ) -> bool where intrinsics.type_is_numeric(T) {
+    ) -> bool where intrinsics.type_is_float(T) ||
+        intrinsics.type_is_integer(T) ||
+        intrinsics.type_is_enum(T) ||
+        intrinsics.type_is_boolean(T) {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         return serialize_opaque(s, data, loc)
     }
@@ -267,7 +270,7 @@ when SERIALIZER_ENABLE_GENERIC {
     serialize_map :: proc(s: ^Serializer, data: ^$T/map[$K]$V, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         num_items := len(data)
-        serialize_number(s, &num_items, loc) or_return
+        serialize_basic(s, &num_items, loc) or_return
 
         if s.is_writing {
             for k, v in data {
@@ -299,7 +302,7 @@ when SERIALIZER_ENABLE_GENERIC {
 
 when SERIALIZER_ENABLE_GENERIC {
     serialize :: proc {
-        serialize_number,
+        serialize_basic,
         serialize_bit_set,
         serialize_array,
         serialize_slice,
@@ -312,6 +315,14 @@ when SERIALIZER_ENABLE_GENERIC {
         serialize_bar,
     }
 }
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Example
+//
+//
+
 
 Foo :: struct {
     a:          i32,
