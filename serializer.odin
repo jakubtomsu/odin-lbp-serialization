@@ -310,7 +310,7 @@ when SERIALIZER_ENABLE_GENERIC {
         serialize_dynamic_array,
         serialize_map,
 
-        // Custom
+        // Add your custom serialization procedures here
         serialize_foo,
         serialize_bar,
     }
