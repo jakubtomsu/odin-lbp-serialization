@@ -18,7 +18,8 @@ Entity :: struct {
 }
 
 entity_serialize :: proc(s: ^Serializer, entity: ^Entity, loc := #caller_location) -> bool {
-  serializer_debug_scope(s, "entity") // useful for debugging. Set serializer.debug.enable_debug_print to true to enable logging
+  // useful for debugging. Set serializer.debug.enable_debug_print to true to enable logging
+  serializer_debug_scope(s, "entity")
   serialize(s, &entity.pos) or_return
   serialize(s, &entity.health) or_return
   serialize(s, &entity.name) or_return
