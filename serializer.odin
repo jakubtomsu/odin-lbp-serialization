@@ -352,6 +352,24 @@ when SERIALIZER_ENABLE_GENERIC {
     }
 }
 
+// WARNING: this requires RTTI!
+serialize_union_tag :: proc(
+    s: ^Serializer,
+    value: ^$T,
+    loc := #caller_location,
+) -> bool where intrinsics.type_is_union(T) {
+    serializer_debug_scope(s, "union tag")
+    tag: i64le
+    if s.is_writing {
+        tag = reflect.get_union_variant_raw_tag(value^)
+    }
+    serialize_basic(s, &tag, loc) or_return
+    if !s.is_writing {
+        reflect.set_union_variant_raw_tag(value^, tag)
+    }
+    return true
+}
+
 
 when SERIALIZER_ENABLE_GENERIC {
     serialize :: proc {
