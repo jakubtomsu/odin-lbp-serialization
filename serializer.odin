@@ -9,6 +9,14 @@ package game
 // Note: numbers are automatically converted to little endian, and pointer-sized
 // types are always treated as 64-bit. see `serialize_number` for more information.
 //
+// Note: if you want to use a custom allocator when deserializing, directly modify the context.
+// The serialization procs don't take an allocator param because it would make things complicated.
+// Example:
+// {
+//      context.allocator = context.temp_allocator
+//      serialize(s, my_slice)
+// }
+//
 // TODO:
 // - handle endianness better: now only integers and floats are hardcoded. Enums and bit_sets aren't.
 
@@ -42,6 +50,7 @@ Serializer :: struct {
     read_offset: int,
     version:     Serializer_Version,
     debug:       Serializer_Debug,
+    failed:      bool,
 }
 
 when ODIN_DEBUG {
@@ -63,7 +72,7 @@ serializer_init_writer :: proc(
     s^ = {
         is_writing = true,
         version    = SERIALIZER_VERSION_LATEST,
-        data       = make([dynamic]byte, 0, capacity, allocator, loc) or_return,
+        data       = make([dynamic]byte, 0, capacity, allocator, loc),
     }
     return nil
 }
@@ -119,8 +128,8 @@ serializer_debug_scope :: proc(s: ^Serializer, name: string) {
     }
 }
 
-@(require_results, optimization_mode = "speed")
-_serialize_bytes :: proc(s: ^Serializer, data: []byte, loc: runtime.Source_Code_Location) -> bool {
+@(optimization_mode = "speed")
+_serialize_bytes :: proc(s: ^Serializer, data: []byte, loc: runtime.Source_Code_Location) {
     when ODIN_DEBUG do if s.debug.print_scope {
         _serializer_debug_scope_indent(s.debug.depth)
         fmt.printf("%i bytes, ", len(data))
@@ -132,103 +141,90 @@ _serialize_bytes :: proc(s: ^Serializer, data: []byte, loc: runtime.Source_Code_
     }
 
     if len(data) == 0 {
-        return true
+        return
     }
 
     if s.is_writing {
         if _, err := append(&s.data, ..data); err != nil {
+            s.failed = true
             when ODIN_DEBUG {
                 panic("Serializer failed to append data", loc)
             }
-            return false
+            return
         }
     } else {
         if len(s.data) < s.read_offset + len(data) {
+            s.failed = true
             when ODIN_DEBUG {
                 panic("Serializer attempted to read past the end of the buffer.", loc)
             }
-            return false
+            return
         }
         copy(data, s.data[s.read_offset:][:len(data)])
         s.read_offset += len(data)
     }
-
-    return true
 }
 
-@(require_results)
-serialize_opaque :: #force_inline proc(s: ^Serializer, data: ^$T, loc := #caller_location) -> bool {
-    return _serialize_bytes(s, #force_inline mem.ptr_to_bytes(data), loc)
+@(optimization_mode = "speed")
+serialize_opaque :: #force_inline proc(s: ^Serializer, data: ^$T, loc := #caller_location) {
+    _serialize_bytes(s, #force_inline mem.ptr_to_bytes(data), loc)
 }
 
 // Serialize slice, fields are treated as opaque bytes.
-@(require_results)
-serialize_opaque_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
+serialize_opaque_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) {
     serializer_debug_scope(s, "opaque slice")
-    serialize_slice_info(s, data, loc) or_return
-    return _serialize_bytes(s, slice.to_bytes(data^), loc)
+    serialize_slice_info(s, data, loc)
+    _serialize_bytes(s, slice.to_bytes(data^), loc)
 }
 
 // Serialize dynamic array, but leaves fields empty.
-@(require_results)
-serialize_slice_info :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
+@(optimization_mode = "speed")
+serialize_slice_info :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) {
     serializer_debug_scope(s, "slice info")
     num_items := len(data)
-    serialize_number(s, &num_items, loc) or_return
+    serialize_number(s, &num_items, loc)
     if !s.is_writing {
         data^ = make([]E, num_items, loc = loc)
     }
-    return true
 }
 
 // Serialize dynamic array, but leaves fields empty.
-@(require_results)
-serialize_dynamic_array_info :: proc(
-    s: ^Serializer,
-    data: ^$T/[dynamic]$E,
-    loc := #caller_location,
-) -> bool {
+@(optimization_mode = "speed")
+serialize_dynamic_array_info :: proc(s: ^Serializer, data: ^$T/[dynamic]$E, loc := #caller_location) {
     serializer_debug_scope(s, "dynamic array info")
     num_items := len(data)
-    serialize_number(s, &num_items, loc) or_return
+    serialize_number(s, &num_items, loc)
     if !s.is_writing {
         data^ = make([dynamic]E, num_items, num_items, loc = loc)
     }
-    return true
 }
 
 // Serialize dynamic array, fields are treated as opaque bytes.
-@(require_results)
-serialize_opaque_dynamic_array :: proc(
-    s: ^Serializer,
-    data: ^$T/[dynamic]$E,
-    loc := #caller_location,
-) -> bool {
+
+serialize_opaque_dynamic_array :: proc(s: ^Serializer, data: ^$T/[dynamic]$E, loc := #caller_location) {
     serializer_debug_scope(s, "opaque dynamic array")
-    serialize_dynamic_array_info(s, data, loc) or_return
-    return _serialize_bytes(s, slice.to_bytes(data[:]), loc)
+    serialize_dynamic_array_info(s, data, loc)
+    _serialize_bytes(s, slice.to_bytes(data[:]), loc)
 }
 
-serialize_opaque_as :: proc(s: ^Serializer, data: ^$T, $CONVERT_T: typeid, loc := #caller_location) -> bool {
+serialize_opaque_as :: proc(s: ^Serializer, data: ^$T, $CONVERT_T: typeid, loc := #caller_location) {
     serializer_debug_scope(s, fmt.tprint(typeid_of(T), "as", typeid_of(CONVERT_T)))
     if s.is_writing {
         d := CONVERT_T(data^)
-        serialize_opaque(s, &d, loc) or_return
+        serialize_opaque(s, &d, loc)
     } else {
         d: CONVERT_T
-        serialize_opaque(s, &d, loc) or_return
+        serialize_opaque(s, &d, loc)
         data^ = T(d)
     }
-    return true
 }
 
 // Automatically converts to little endian
-@(require_results)
-serialize_number :: proc(
-    s: ^Serializer,
-    data: ^$T,
-    loc := #caller_location,
-) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_integer(T) {
+// odinfmt: disable
+@(optimization_mode = "speed")
+serialize_number :: proc(s: ^Serializer, data: ^$T, loc := #caller_location)
+    where intrinsics.type_is_float(T) ||
+    intrinsics.type_is_integer(T) {
     serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
 
     // Always
@@ -236,110 +232,98 @@ serialize_number :: proc(
         // Serialize pointer-sized integers as 64-bit
         switch typeid_of(T) {
         case int:
-            return serialize_opaque_as(s, data, i64, loc)
+            serialize_opaque_as(s, data, i64, loc)
         case uint:
-            return serialize_opaque_as(s, data, i64, loc)
+            serialize_opaque_as(s, data, i64, loc)
         case uintptr:
-            return serialize_opaque_as(s, data, i64, loc)
+            serialize_opaque_as(s, data, i64, loc)
         case:
-            return serialize_opaque(s, data, loc)
+            serialize_opaque(s, data, loc)
         }
 
     } else {
         
-            // odinfmt: disable
         switch typeid_of(T) {
-        case int: return serialize_opaque_as(s, data, i64le, loc)
-        case i16: return serialize_opaque_as(s, data, i16le, loc)
-        case i32: return serialize_opaque_as(s, data, i32le, loc)
-        case i64: return serialize_opaque_as(s, data, i64le, loc)
-        case i128: return serialize_opaque_as(s, data, i128le, loc)
+        case int: serialize_opaque_as(s, data, i64le, loc)
+        case i16: serialize_opaque_as(s, data, i16le, loc)
+        case i32: serialize_opaque_as(s, data, i32le, loc)
+        case i64: serialize_opaque_as(s, data, i64le, loc)
+        case i128: serialize_opaque_as(s, data, i128le, loc)
 
-        case uint: return serialize_opaque_as(s, data, u64le, loc)
-        case u16: return serialize_opaque_as(s, data, u16le, loc)
-        case u32: return serialize_opaque_as(s, data, u32le, loc)
-        case u64: return serialize_opaque_as(s, data, u64le, loc)
-        case u128: return serialize_opaque_as(s, data, u128le, loc)
-        case uintptr: return serialize_opaque_as(s, data, u64le, loc)
+        case uint: serialize_opaque_as(s, data, u64le, loc)
+        case u16: serialize_opaque_as(s, data, u16le, loc)
+        case u32: serialize_opaque_as(s, data, u32le, loc)
+        case u64: serialize_opaque_as(s, data, u64le, loc)
+        case u128: serialize_opaque_as(s, data, u128le, loc)
+        case uintptr: serialize_opaque_as(s, data, u64le, loc)
 
-        case f16: return serialize_opaque_as(s, data, f16le, loc)
-        case f32: return serialize_opaque_as(s, data, f32le, loc)
-        case f64: return serialize_opaque_as(s, data, f64le, loc)
+        case f16: serialize_opaque_as(s, data, f16le, loc)
+        case f32: serialize_opaque_as(s, data, f32le, loc)
+        case f64: serialize_opaque_as(s, data, f64le, loc)
         
         case:
-            return serialize_opaque(s, data, loc)
+            serialize_opaque(s, data, loc)
         }
-        // odinfmt: enable
     }
-    return false
 }
+// odinfmt: enable
 
-@(require_results)
-serialize_basic :: proc(
-    s: ^Serializer,
-    data: ^$T,
-    loc := #caller_location,
-) -> bool where intrinsics.type_is_enum(T) ||
+
+// odinfmt: disable
+serialize_basic :: proc(s: ^Serializer, data: ^$T, loc := #caller_location)
+    where intrinsics.type_is_enum(T) ||
     intrinsics.type_is_boolean(T) ||
     intrinsics.type_is_bit_set(T) {
     serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
-    return serialize_opaque(s, data, loc)
+    serialize_opaque(s, data, loc)
 }
-
+// odinfmt: enable
 
 when SERIALIZER_ENABLE_GENERIC {
-    @(require_results)
-    serialize_array :: proc(s: ^Serializer, data: ^$T/[$S]$E, loc := #caller_location) -> bool {
+    serialize_array :: proc(s: ^Serializer, data: ^$T/[$S]$E, loc := #caller_location) {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         when intrinsics.type_is_numeric(E) {
-            serialize_opaque(s, data, loc) or_return
+            serialize_opaque(s, data, loc)
         } else {
             for &v in data {
-                serialize(s, &v, loc) or_return
+                serialize(s, &v, loc)
             }
         }
-        return true
     }
 
-    @(require_results)
-    serialize_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
+    serialize_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
-        serialize_slice_info(s, data, loc) or_return
+        serialize_slice_info(s, data, loc)
         for &v in data {
-            serialize(s, &v, loc) or_return
+            serialize(s, &v, loc)
         }
-        return true
     }
 
-    @(require_results)
-    serialize_string :: proc(s: ^Serializer, data: ^string, loc := #caller_location) -> bool {
+    serialize_string :: proc(s: ^Serializer, data: ^string, loc := #caller_location) {
         serializer_debug_scope(s, "string")
-        return serialize_opaque_slice(s, transmute(^[]u8)data, loc)
+        serialize_opaque_slice(s, transmute(^[]u8)data, loc)
     }
 
-    @(require_results)
-    serialize_dynamic_array :: proc(s: ^Serializer, data: ^$T/[dynamic]$E, loc := #caller_location) -> bool {
+    serialize_dynamic_array :: proc(s: ^Serializer, data: ^$T/[dynamic]$E, loc := #caller_location) {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
-        serialize_dynamic_array_info(s, data, loc) or_return
+        serialize_dynamic_array_info(s, data, loc)
         for &v in data {
-            serialize(s, &v, loc) or_return
+            serialize(s, &v, loc)
         }
-        return true
     }
 
-    @(require_results)
-    serialize_map :: proc(s: ^Serializer, data: ^$T/map[$K]$V, loc := #caller_location) -> bool {
+    serialize_map :: proc(s: ^Serializer, data: ^$T/map[$K]$V, loc := #caller_location) {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         num_items := len(data)
-        serialize_number(s, &num_items, loc) or_return
+        serialize_number(s, &num_items, loc)
 
         if s.is_writing {
             for k, v in data {
                 k_ := k
                 v_ := v
-                serialize(s, &k_, loc) or_return
+                serialize(s, &k_, loc)
                 when size_of(V) > 0 {
-                    serialize(s, &v_, loc) or_return
+                    serialize(s, &v_, loc)
                 }
             }
         } else {
@@ -347,15 +331,13 @@ when SERIALIZER_ENABLE_GENERIC {
             for _ in 0 ..< num_items {
                 k: K
                 v: V
-                serialize(s, &k, loc) or_return
+                serialize(s, &k, loc)
                 when size_of(V) > 0 {
-                    serialize(s, &v, loc) or_return
+                    serialize(s, &v, loc)
                 }
                 data[k] = v
             }
         }
-
-        return true
     }
 }
 
@@ -398,24 +380,22 @@ Bar :: struct {
     data: map[i32]bit_set[0 ..< 8],
 }
 
-serialize_foo :: proc(s: ^Serializer, foo: ^Foo, loc := #caller_location) -> bool {
+serialize_foo :: proc(s: ^Serializer, foo: ^Foo, loc := #caller_location) {
     serializer_debug_scope(s, "foo") // optional
-    serialize(s, &foo.a, loc) or_return
-    serialize(s, &foo.b, loc) or_return
-    serialize(s, &foo.name, loc) or_return
+    serialize(s, &foo.a, loc)
+    serialize(s, &foo.b, loc)
+    serialize(s, &foo.name, loc)
     {
         context.allocator = context.temp_allocator
-        serialize(s, &foo.big_buffer, loc) or_return
+        serialize(s, &foo.big_buffer, loc)
     }
-    return true
 }
 
-serialize_bar :: proc(s: ^Serializer, bar: ^Bar, loc := #caller_location) -> bool {
+serialize_bar :: proc(s: ^Serializer, bar: ^Bar, loc := #caller_location) {
     serializer_debug_scope(s, "bar")
     // you can but don't have to pass the `loc` parameter into the serialize procedures
-    serialize(s, &bar.foos) or_return
-    serialize(s, &bar.data) or_return
-    return true
+    serialize(s, &bar.foos)
+    serialize(s, &bar.data)
 }
 
 compare_bar :: proc(a, b: Bar) -> bool {
@@ -449,51 +429,52 @@ Baz :: struct {
     f: [4]f32,
 }
 
-serialize_baz :: proc(s: ^Serializer, baz: ^Baz, loc := #caller_location) -> bool {
-    serialize(s, &baz.a, loc) or_return
-    serialize(s, &baz.b, loc) or_return
-    serialize(s, &baz.c, loc) or_return
-    serialize(s, &baz.d, loc) or_return
-    serialize(s, &baz.e, loc) or_return
-    serialize(s, &baz.f, loc) or_return
-    return true
+serialize_baz :: proc(s: ^Serializer, baz: ^Baz, loc := #caller_location) {
+    serialize(s, &baz.a, loc)
+    serialize(s, &baz.b, loc)
+    serialize(s, &baz.c, loc)
+    serialize(s, &baz.d, loc)
+    serialize(s, &baz.e, loc)
+    serialize(s, &baz.f, loc)
 }
 
 main :: proc() {
-    s: Serializer
-    serializer_init_writer(&s)
-    when ODIN_DEBUG {
-        s.debug.print_scope = true
-    }
-
-    bar: Bar = {
-        foos = {
-            {a = 123, b = 0.1, name = "hello", big_buffer = {1, 2, 3, 4, 5}},
-            {a = 1e9, b = -10e20, name = "bye", big_buffer = {}},
-        },
-        data = {-10 = {1, 0}, 23 = {2, 3}, 62 = {6, 2}},
-    }
-
-    fmt.println("Hello")
-    fmt.println(bar)
-
-    serialize_bar(&s, &bar)
-
     {
-        data := s.data[:]
         s: Serializer
-        serializer_init_reader(&s, data)
-        new_bar: Bar
-        serialize_bar(&s, &new_bar)
+        serializer_init_writer(&s)
+        when ODIN_DEBUG {
+            s.debug.print_scope = true
+        }
 
-        fmt.println(new_bar)
+        bar: Bar = {
+            foos = {
+                {a = 123, b = 0.1, name = "hello", big_buffer = {1, 2, 3, 4, 5}},
+                {a = 1e9, b = -10e20, name = "bye", big_buffer = {}},
+            },
+            data = {-10 = {1, 0}, 23 = {2, 3}, 62 = {6, 2}},
+        }
 
-        assert(compare_bar(bar, new_bar))
+        fmt.println("Hello")
+        fmt.println(bar)
+
+        serialize_bar(&s, &bar)
+
+        {
+            data := s.data[:]
+            s: Serializer
+            serializer_init_reader(&s, data)
+            new_bar: Bar
+            serialize_bar(&s, &new_bar)
+
+            fmt.println(new_bar)
+
+            assert(compare_bar(bar, new_bar))
+        }
     }
 
     // Overhead benchmark
     {
-        arr := make([]Baz, 1024 * 100)
+        arr := make([]Baz, 1024 * 1024 * 100)
         fmt.println("size_of(Baz):", size_of(Baz))
         fmt.println("benchmark array size in bytes:", size_of(Baz) * len(arr))
 
@@ -501,7 +482,7 @@ main :: proc() {
         serializer_init_writer(&s, size_of(Baz) * len(arr))
 
         start := time.tick_now()
-        _ = serialize(&s, &arr)
+        serialize(&s, &arr)
         dur_ser := time.tick_since(start)
 
         data := make([]u8, size_of(Baz) * len(arr))
