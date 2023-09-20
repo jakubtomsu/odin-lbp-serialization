@@ -8,6 +8,9 @@ package game
 //
 // Note: numbers are automatically converted to little endian, and pointer-sized
 // types are always treated as 64-bit. see `serialize_number` for more information.
+//
+// TODO:
+// - handle endianness better: now only integers and floats are hardcoded. Enums and bit_sets aren't.
 
 
 import "core:fmt"
@@ -43,8 +46,8 @@ Serializer :: struct {
 
 when ODIN_DEBUG {
     Serializer_Debug :: struct {
-        enable_debug_print: bool,
-        depth:              int,
+        print_scope: bool,
+        depth:       int,
     }
 } else {
     Serializer_Debug :: struct {}
@@ -98,7 +101,7 @@ _serializer_debug_scope_indent :: proc(depth: int) {
 }
 
 _serializer_debug_scope_end :: proc(s: ^Serializer, name: string) {
-    when ODIN_DEBUG do if s.debug.enable_debug_print {
+    when ODIN_DEBUG do if s.debug.print_scope {
         s.debug.depth -= 1
         _serializer_debug_scope_indent(s.debug.depth)
         runtime.print_string("}\n")
@@ -107,7 +110,7 @@ _serializer_debug_scope_end :: proc(s: ^Serializer, name: string) {
 
 @(disabled = !ODIN_DEBUG, deferred_in = _serializer_debug_scope_end)
 serializer_debug_scope :: proc(s: ^Serializer, name: string) {
-    when ODIN_DEBUG do if s.debug.enable_debug_print {
+    when ODIN_DEBUG do if s.debug.print_scope {
         _serializer_debug_scope_indent(s.debug.depth)
         runtime.print_string(name)
         runtime.print_string(" {")
@@ -118,7 +121,7 @@ serializer_debug_scope :: proc(s: ^Serializer, name: string) {
 
 @(require_results, optimization_mode = "speed")
 _serialize_bytes :: proc(s: ^Serializer, data: []byte, loc: runtime.Source_Code_Location) -> bool {
-    when ODIN_DEBUG do if s.debug.enable_debug_print {
+    when ODIN_DEBUG do if s.debug.print_scope {
         _serializer_debug_scope_indent(s.debug.depth)
         fmt.printf("%i bytes, ", len(data))
         if s.is_writing {
@@ -233,11 +236,11 @@ serialize_number :: proc(
         // Serialize pointer-sized integers as 64-bit
         switch typeid_of(T) {
         case int:
-            return serialize_opaque_as(s, data, i64le, loc)
+            return serialize_opaque_as(s, data, i64, loc)
         case uint:
-            return serialize_opaque_as(s, data, i64le, loc)
+            return serialize_opaque_as(s, data, i64, loc)
         case uintptr:
-            return serialize_opaque_as(s, data, i64le, loc)
+            return serialize_opaque_as(s, data, i64, loc)
         case:
             return serialize_opaque(s, data, loc)
         }
@@ -371,6 +374,7 @@ when SERIALIZER_ENABLE_GENERIC {
         // Add your custom serialization procedures here
         serialize_foo,
         serialize_bar,
+        serialize_baz,
     }
 }
 
@@ -379,6 +383,8 @@ when SERIALIZER_ENABLE_GENERIC {
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Example
 //
+
+import "core:time"
 
 Foo :: struct {
     a:          i32,
@@ -412,7 +418,6 @@ serialize_bar :: proc(s: ^Serializer, bar: ^Bar, loc := #caller_location) -> boo
     return true
 }
 
-
 compare_bar :: proc(a, b: Bar) -> bool {
     compare_foo :: proc(a, b: Foo) -> bool {
         if a.name != b.name do return false
@@ -434,11 +439,31 @@ compare_bar :: proc(a, b: Bar) -> bool {
     return true
 }
 
+
+Baz :: struct {
+    a: f32,
+    b: i32,
+    c: u8,
+    d: u64,
+    e: i128,
+    f: [4]f32,
+}
+
+serialize_baz :: proc(s: ^Serializer, baz: ^Baz, loc := #caller_location) -> bool {
+    serialize(s, &baz.a, loc) or_return
+    serialize(s, &baz.b, loc) or_return
+    serialize(s, &baz.c, loc) or_return
+    serialize(s, &baz.d, loc) or_return
+    serialize(s, &baz.e, loc) or_return
+    serialize(s, &baz.f, loc) or_return
+    return true
+}
+
 main :: proc() {
     s: Serializer
     serializer_init_writer(&s)
     when ODIN_DEBUG {
-        s.debug.enable_debug_print = true
+        s.debug.print_scope = true
     }
 
     bar: Bar = {
@@ -464,6 +489,34 @@ main :: proc() {
         fmt.println(new_bar)
 
         assert(compare_bar(bar, new_bar))
+    }
+
+    // Overhead benchmark
+    {
+        arr := make([]Baz, 1024 * 100)
+        fmt.println("size_of(Baz):", size_of(Baz))
+        fmt.println("benchmark array size in bytes:", size_of(Baz) * len(arr))
+
+        s: Serializer
+        serializer_init_writer(&s, size_of(Baz) * len(arr))
+
+        start := time.tick_now()
+        _ = serialize(&s, &arr)
+        dur_ser := time.tick_since(start)
+
+        data := make([]u8, size_of(Baz) * len(arr))
+
+        start = time.tick_now()
+        intrinsics.mem_copy(&data[0], &arr[0], len(data))
+        dur_copy := time.tick_since(start)
+
+        fmt.println("Serialize duration:", time.duration_microseconds(dur_ser), "microseconds")
+        fmt.println("Copy duration:", time.duration_microseconds(dur_copy), "microseconds")
+        fmt.println(
+            "Serialization is",
+            f64(time.duration_nanoseconds(dur_ser)) / f64(time.duration_nanoseconds(dur_copy)),
+            "times slower",
+        )
     }
 }
 
