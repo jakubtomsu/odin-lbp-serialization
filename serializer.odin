@@ -223,7 +223,7 @@ serialize_number :: proc(
     data: ^$T,
     loc := #caller_location,
 ) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_integer(T) {
-    serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
+    serializer_debug_scope(s, fmt.tprint(typeid_of(T), "=", data^))
 
     // Always
     when ODIN_ENDIAN != .Big {
@@ -276,7 +276,7 @@ serialize_basic :: proc(
 ) -> bool where intrinsics.type_is_enum(T) ||
     intrinsics.type_is_boolean(T) ||
     intrinsics.type_is_bit_set(T) {
-    serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
+    serializer_debug_scope(s, fmt.tprint(typeid_of(T), "=", data^))
     return serialize_opaque(s, data, loc)
 }
 
@@ -306,7 +306,7 @@ when SERIALIZER_ENABLE_GENERIC {
 
 
     serialize_string :: proc(s: ^Serializer, data: ^string, loc := #caller_location) -> bool {
-        serializer_debug_scope(s, "string")
+        serializer_debug_scope(s, fmt.tprintf("string = \"%s\"", data^))
         return serialize_opaque_slice(s, transmute(^[]u8)data, loc)
     }
 
