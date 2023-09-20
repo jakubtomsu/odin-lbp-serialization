@@ -1,5 +1,15 @@
 package game
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+// LBP Serializer
+//
+// Explanation of the method:
+// https://handmade.network/p/29/swedish-cubes-for-unity/blog/p/2723-how_media_molecule_does_serialization
+//
+// Note: numbers are automatically converted to little endian, and pointer-sized
+// types are always treated as 64-bit. see `serialize_number` for more information.
+
+
 import "core:fmt"
 import "core:intrinsics"
 import "core:mem"
@@ -8,10 +18,9 @@ import "core:slice"
 
 _ :: fmt // fmt is used only for debug printing
 
-SERIALIZER_ENABLE_GENERIC :: #config(SERIALIZER_ENABLE_GENERIC, true)
 
-// Explanation of the LBP serialization method:
-// https://handmade.network/p/29/swedish-cubes-for-unity/blog/p/2723-how_media_molecule_does_serialization
+
+SERIALIZER_ENABLE_GENERIC :: #config(SERIALIZER_ENABLE_GENERIC, true)
 
 // Each update to the data layout should be a value in this enum.
 // WARNING: do not change the order of these!
@@ -162,7 +171,7 @@ serialize_opaque_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_lo
 serialize_slice_info :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
     serializer_debug_scope(s, "slice info")
     num_items := len(data)
-    serialize_basic(s, &num_items, loc) or_return
+    serialize_number(s, &num_items, loc) or_return
     if !s.is_writing {
         data^ = make([]E, num_items, loc = loc)
     }
@@ -178,7 +187,7 @@ serialize_dynamic_array_info :: proc(
 ) -> bool {
     serializer_debug_scope(s, "dynamic array info")
     num_items := len(data)
-    serialize_basic(s, &num_items, loc) or_return
+    serialize_number(s, &num_items, loc) or_return
     if !s.is_writing {
         data^ = make([dynamic]E, num_items, num_items, loc = loc)
     }
@@ -197,36 +206,85 @@ serialize_opaque_dynamic_array :: proc(
     return _serialize_bytes(s, slice.to_bytes(data[:]), loc)
 }
 
+serialize_opaque_as :: proc(s: ^Serializer, data: ^$T, $CONVERT_T: typeid, loc := #caller_location) -> bool {
+    serializer_debug_scope(s, fmt.tprint(typeid_of(T), "as", typeid_of(CONVERT_T)))
+    if s.is_writing {
+        d := CONVERT_T(data^)
+        serialize_opaque(s, &d, loc) or_return
+    } else {
+        d: CONVERT_T
+        serialize_opaque(s, &d, loc) or_return
+        data^ = T(d)
+    }
+    return true
+}
+
+// Automatically converts to little endian
+@(require_results)
+serialize_number :: proc(
+    s: ^Serializer,
+    data: ^$T,
+    loc := #caller_location,
+) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_integer(T) {
+    serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
+
+    // Always
+    when ODIN_ENDIAN != .Big {
+        // Serialize pointer-sized integers as 64-bit
+        switch typeid_of(T) {
+        case int:
+            return serialize_opaque_as(s, data, i64le, loc)
+        case uint:
+            return serialize_opaque_as(s, data, i64le, loc)
+        case uintptr:
+            return serialize_opaque_as(s, data, i64le, loc)
+        case:
+            return serialize_opaque(s, data, loc)
+        }
+
+    } else {
+        
+            // odinfmt: disable
+        switch typeid_of(T) {
+        case int: return serialize_opaque_as(s, data, i64le, loc)
+        case i16: return serialize_opaque_as(s, data, i16le, loc)
+        case i32: return serialize_opaque_as(s, data, i32le, loc)
+        case i64: return serialize_opaque_as(s, data, i64le, loc)
+        case i128: return serialize_opaque_as(s, data, i128le, loc)
+
+        case uint: return serialize_opaque_as(s, data, u64le, loc)
+        case u16: return serialize_opaque_as(s, data, u16le, loc)
+        case u32: return serialize_opaque_as(s, data, u32le, loc)
+        case u64: return serialize_opaque_as(s, data, u64le, loc)
+        case u128: return serialize_opaque_as(s, data, u128le, loc)
+        case uintptr: return serialize_opaque_as(s, data, u64le, loc)
+
+        case f16: return serialize_opaque_as(s, data, f16le, loc)
+        case f32: return serialize_opaque_as(s, data, f32le, loc)
+        case f64: return serialize_opaque_as(s, data, f64le, loc)
+        
+        case:
+            return serialize_opaque(s, data, loc)
+        }
+        // odinfmt: enable
+    }
+    return false
+}
+
+@(require_results)
+serialize_basic :: proc(
+    s: ^Serializer,
+    data: ^$T,
+    loc := #caller_location,
+) -> bool where intrinsics.type_is_enum(T) ||
+    intrinsics.type_is_boolean(T) ||
+    intrinsics.type_is_bit_set(T) {
+    serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
+    return serialize_opaque(s, data, loc)
+}
+
+
 when SERIALIZER_ENABLE_GENERIC {
-    @(require_results)
-    serialize_basic :: proc(
-        s: ^Serializer,
-        data: ^$T,
-        loc := #caller_location,
-    ) -> bool where intrinsics.type_is_float(T) ||
-        intrinsics.type_is_integer(T) ||
-        intrinsics.type_is_enum(T) ||
-        intrinsics.type_is_boolean(T) {
-        serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
-        return serialize_opaque(s, data, loc)
-    }
-
-    @(require_results)
-    serialize_bit_set :: proc(s: ^Serializer, data: ^$T/bit_set[$E], loc := #caller_location) -> bool {
-        serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
-        return serialize_opaque(s, data, loc)
-    }
-
-    @(require_results)
-    serialize_enum :: proc(
-        s: ^Serializer,
-        data: ^$T,
-        loc := #caller_location,
-    ) -> bool where intrinsics.type_is_enum(T) {
-        serializer_debug_scope(s, fmt.tprint(typeid_of(T)), false)
-        return serialize_opaque(s, data, loc)
-    }
-
     @(require_results)
     serialize_array :: proc(s: ^Serializer, data: ^$T/[$S]$E, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
@@ -270,7 +328,7 @@ when SERIALIZER_ENABLE_GENERIC {
     serialize_map :: proc(s: ^Serializer, data: ^$T/map[$K]$V, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         num_items := len(data)
-        serialize_basic(s, &num_items, loc) or_return
+        serialize_number(s, &num_items, loc) or_return
 
         if s.is_writing {
             for k, v in data {
@@ -302,8 +360,8 @@ when SERIALIZER_ENABLE_GENERIC {
 
 when SERIALIZER_ENABLE_GENERIC {
     serialize :: proc {
+        serialize_number,
         serialize_basic,
-        serialize_bit_set,
         serialize_array,
         serialize_slice,
         serialize_string,
@@ -317,12 +375,10 @@ when SERIALIZER_ENABLE_GENERIC {
 }
 
 
+
 //////////////////////////////////////////////////////////////////////////////////////////////
-//
 // Example
 //
-//
-
 
 Foo :: struct {
     a:          i32,
