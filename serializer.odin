@@ -156,13 +156,11 @@ _serialize_bytes :: proc(s: ^Serializer, data: []byte, loc: runtime.Source_Code_
     return true
 }
 
-@(require_results)
 serialize_opaque :: #force_inline proc(s: ^Serializer, data: ^$T, loc := #caller_location) -> bool {
     return _serialize_bytes(s, #force_inline mem.ptr_to_bytes(data), loc)
 }
 
 // Serialize slice, fields are treated as opaque bytes.
-@(require_results)
 serialize_opaque_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
     serializer_debug_scope(s, "opaque slice")
     serialize_slice_info(s, data, loc) or_return
@@ -170,7 +168,6 @@ serialize_opaque_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_lo
 }
 
 // Serialize dynamic array, but leaves fields empty.
-@(require_results)
 serialize_slice_info :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
     serializer_debug_scope(s, "slice info")
     num_items := len(data)
@@ -182,7 +179,6 @@ serialize_slice_info :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_loca
 }
 
 // Serialize dynamic array, but leaves fields empty.
-@(require_results)
 serialize_dynamic_array_info :: proc(
     s: ^Serializer,
     data: ^$T/[dynamic]$E,
@@ -198,7 +194,6 @@ serialize_dynamic_array_info :: proc(
 }
 
 // Serialize dynamic array, fields are treated as opaque bytes.
-@(require_results)
 serialize_opaque_dynamic_array :: proc(
     s: ^Serializer,
     data: ^$T/[dynamic]$E,
@@ -223,7 +218,6 @@ serialize_opaque_as :: proc(s: ^Serializer, data: ^$T, $CONVERT_T: typeid, loc :
 }
 
 // Automatically converts to little endian
-@(require_results)
 serialize_number :: proc(
     s: ^Serializer,
     data: ^$T,
@@ -274,7 +268,7 @@ serialize_number :: proc(
     return false
 }
 
-@(require_results)
+
 serialize_basic :: proc(
     s: ^Serializer,
     data: ^$T,
@@ -288,7 +282,6 @@ serialize_basic :: proc(
 
 
 when SERIALIZER_ENABLE_GENERIC {
-    @(require_results)
     serialize_array :: proc(s: ^Serializer, data: ^$T/[$S]$E, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         when intrinsics.type_is_numeric(E) {
@@ -301,7 +294,7 @@ when SERIALIZER_ENABLE_GENERIC {
         return true
     }
 
-    @(require_results)
+
     serialize_slice :: proc(s: ^Serializer, data: ^$T/[]$E, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         serialize_slice_info(s, data, loc) or_return
@@ -311,13 +304,13 @@ when SERIALIZER_ENABLE_GENERIC {
         return true
     }
 
-    @(require_results)
+
     serialize_string :: proc(s: ^Serializer, data: ^string, loc := #caller_location) -> bool {
         serializer_debug_scope(s, "string")
         return serialize_opaque_slice(s, transmute(^[]u8)data, loc)
     }
 
-    @(require_results)
+
     serialize_dynamic_array :: proc(s: ^Serializer, data: ^$T/[dynamic]$E, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         serialize_dynamic_array_info(s, data, loc) or_return
@@ -327,7 +320,7 @@ when SERIALIZER_ENABLE_GENERIC {
         return true
     }
 
-    @(require_results)
+
     serialize_map :: proc(s: ^Serializer, data: ^$T/map[$K]$V, loc := #caller_location) -> bool {
         serializer_debug_scope(s, fmt.tprint(typeid_of(T)))
         num_items := len(data)
@@ -358,7 +351,6 @@ when SERIALIZER_ENABLE_GENERIC {
         return true
     }
 }
-
 
 
 when SERIALIZER_ENABLE_GENERIC {
@@ -400,12 +392,12 @@ Bar :: struct {
 
 serialize_foo :: proc(s: ^Serializer, foo: ^Foo, loc := #caller_location) -> bool {
     serializer_debug_scope(s, "foo") // optional
-    serialize(s, &foo.a, loc) or_return
-    serialize(s, &foo.b, loc) or_return
-    serialize(s, &foo.name, loc) or_return
+    serialize(s, &foo.a, loc)
+    serialize(s, &foo.b, loc)
+    serialize(s, &foo.name, loc)
     {
         context.allocator = context.temp_allocator
-        serialize(s, &foo.big_buffer, loc) or_return
+        serialize(s, &foo.big_buffer, loc)
     }
     return true
 }
@@ -413,8 +405,8 @@ serialize_foo :: proc(s: ^Serializer, foo: ^Foo, loc := #caller_location) -> boo
 serialize_bar :: proc(s: ^Serializer, bar: ^Bar, loc := #caller_location) -> bool {
     serializer_debug_scope(s, "bar")
     // you can but don't have to pass the `loc` parameter into the serialize procedures
-    serialize(s, &bar.foos) or_return
-    serialize(s, &bar.data) or_return
+    serialize(s, &bar.foos)
+    serialize(s, &bar.data)
     return true
 }
 
