@@ -1,7 +1,7 @@
 # LBP serialization
 This is a small drop-in code sample for binary [LBP](https://handmade.network/p/29/swedish-cubes-for-unity/blog/p/2723-how_media_molecule_does_serialization) serialization.
 
-The benefits of this method include
+The benefits of this method include:
 - You need only one procedure for both seralization and deserialization. This way they can't go out of sync
 - Full backwards compatibility with all previous versions
 - no need for RTTI
@@ -15,6 +15,7 @@ Entity :: struct {
   pos: [2]f32,
   health: f32,
   name: string,
+  foo: i32, // Added in version 'Add_Foo'
 }
 
 entity_serialize :: proc(s: ^Serializer, entity: ^Entity, loc := #caller_location) -> bool {
@@ -23,6 +24,7 @@ entity_serialize :: proc(s: ^Serializer, entity: ^Entity, loc := #caller_locatio
   serialize(s, &entity.pos) or_return
   serialize(s, &entity.health) or_return
   serialize(s, &entity.name) or_return
+  if s.version >= .Add_Foo do serialize(s, &entity.foo) or_return
   return true
 }
 ```
