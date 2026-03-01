@@ -1,3 +1,4 @@
+#+feature dynamic-literals
 package game
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -14,9 +15,9 @@ package game
 
 
 import "core:fmt"
-import "core:intrinsics"
+import "base:intrinsics"
 import "core:mem"
-import "core:runtime"
+import "base:runtime"
 import "core:slice"
 
 _ :: fmt // fmt is used only for debug printing
@@ -72,6 +73,7 @@ serializer_init_writer :: proc(
 serializer_init_reader :: proc(s: ^Serializer, data: []byte) {
     s^ = {
         is_writing = false,
+        version    = SERIALIZER_VERSION_LATEST,
         data       = transmute([dynamic]u8)runtime.Raw_Dynamic_Array{
             data = (transmute(runtime.Raw_Slice)data).data,
             len = len(data),
@@ -119,7 +121,7 @@ serializer_debug_scope :: proc(s: ^Serializer, name: string) {
     }
 }
 
-@(require_results, optimization_mode = "speed")
+@(require_results, optimization_mode = "favor_size")
 _serialize_bytes :: proc(s: ^Serializer, data: []byte, loc: runtime.Source_Code_Location) -> bool {
     when ODIN_DEBUG do if s.debug.print_scope {
         _serializer_debug_scope_indent(s.debug.depth)
@@ -336,7 +338,7 @@ when SERIALIZER_ENABLE_GENERIC {
                 }
             }
         } else {
-            data^ = make_map(map[K]V, num_items)
+            data^ = make_map(map[K]V)
             for _ in 0 ..< num_items {
                 k: K
                 v: V
